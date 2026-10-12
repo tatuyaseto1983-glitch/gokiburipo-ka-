@@ -30,9 +30,17 @@ button:disabled{opacity:.4}
 .chip.warn{background:#ffe3a8;font-weight:700}
 .chip.danger{background:#f8c9c7;font-weight:700}
 .hand{display:flex;flex-wrap:wrap;gap:6px}
-.c{width:54px;height:72px;border-radius:9px;border:2px solid var(--line);background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:28px;position:relative}
-.c small{font-size:10px;color:#667}
-.c.sel{border-color:var(--amber);transform:translateY(-6px);box-shadow:0 4px 8px #0002;background:#fff8ec}
+.c{width:62px;position:relative;transition:transform .12s}
+.c .card-svg{display:block;width:100%;filter:drop-shadow(0 2px 2px #0003)}
+.c.sel{transform:translateY(-8px) scale(1.06);filter:drop-shadow(0 0 5px var(--amber))}
+.card-svg{display:block;width:100%;height:auto}
+.bigcard{width:150px;margin:6px auto}
+.bigcard.sm{width:96px}
+.mini{display:inline-flex;align-items:flex-end;gap:2px;margin-right:6px}
+.mini .card-svg{width:24px}
+.mini b{font-size:13px}
+.mini.warn .card-svg{filter:drop-shadow(0 0 3px #e0a45c)}
+.mini.danger .card-svg{filter:drop-shadow(0 0 4px #d9534f)}
 .types{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
 .types button{background:#fff;color:var(--ink);border:2px solid var(--line);padding:8px 2px;font-size:24px;line-height:1.2}
 .types button small{display:block;font-size:11px;font-weight:400}
@@ -49,12 +57,13 @@ button:disabled{opacity:.4}
 </head>
 <body>
 <div id="app"></div>
+<script src="cards.js"></script>
 <script>
 const TYPES = {cockroach:['🪳','ゴキブリ'],rat:['🐀','ネズミ'],bat:['🦇','コウモリ'],fly:['🪰','ハエ'],toad:['🐸','カエル'],spider:['🕷️','クモ'],scorpion:['🦂','サソリ'],stinkbug:['🪲','カメムシ']};
 const KEYS = Object.keys(TYPES);
 const $app = document.getElementById('app');
 let ws, S = null, err = '';
-let lastKey = '', sel = null, claim = null, target = null; // 操作中の選択
+let lastKey = '', sel = null, target = null; // 操作中の選択
 const store = {get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}}};
 
 function connect(first){
@@ -65,7 +74,7 @@ function connect(first){
     if(m.t==='joined'){ store.set('token',m.token); }
     else if(m.t==='error'){ err = m.text; render(); }
     else if(m.t==='state'){
-      if(S && (S.phase!==m.phase || S.turn!==m.turn || (S.offer&&S.offer.to)!==(m.offer&&m.offer.to) || (S.offer&&S.offer.peeked)!==(m.offer&&m.offer.peeked))){ sel=claim=target=null; }
+      if(S && (S.phase!==m.phase || S.turn!==m.turn || (S.offer&&S.offer.to)!==(m.offer&&m.offer.to) || (S.offer&&S.offer.peeked)!==(m.offer&&m.offer.peeked))){ sel=target=null; }
       S = m; err=''; store.set('room',m.room); render();
     }
   };
@@ -90,17 +99,14 @@ function home(){
 
 function playerCard(p,i){
   const counts = {}; p.pile.forEach(t=>counts[t]=(counts[t]||0)+1);
-  const chips = Object.keys(counts).map(t=>`<span class="chip ${counts[t]>=3?(counts[t]>=4?'danger':'warn'):''}">${TYPES[t][0]}×${counts[t]}</span>`).join('');
+  const chips = Object.keys(counts).map(t=>`<span class="mini ${counts[t]>=4?'danger':counts[t]>=3?'warn':''}">${CARDS.cardSVG(t)}<b>×${counts[t]}</b></span>`).join('');
   const kinds = Object.keys(counts).length;
   return `<div class="pl ${S.turn===i&&S.phase!=='lobby'?'turn':''} ${i===S.me?'me':''} ${p.online?'':'off'}">
     <div><b>${esc(p.name)}</b>${i===S.me?'（あなた）':''}${p.seen?' 👀':''}
     <div class="pile">${chips||'<span style="color:#9aa">前のカード なし</span>'}${kinds>=6?`<span class="chip warn">${kinds}/8種類</span>`:''}</div></div>
-    ${S.phase==='lobby'?'':`<div>🂠×${p.handCount}</div>`}</div>`;
+    ${S.phase==='lobby'?'':`<div class="mini">${CARDS.cardBack()}<b>×${p.handCount}</b></div>`}</div>`;
 }
 
-function typePicker(){
-  return `<div class="types">${KEYS.map(k=>`<button data-claim="${k}" class="${claim===k?'on':''}">${TYPES[k][0]}<small>${TYPES[k][1]}</small></button>`).join('')}</div>`;
-}
 function targetPicker(exclude){
   return `<div class="tg">${S.players.map((p,i)=>exclude.includes(i)?'':`<button class="${target===i?'amber':'sub'}" data-target="${i}">${esc(p.name)}</button>`).join('')}</div>`;
 }
@@ -120,11 +126,11 @@ function render(){
   }
 
   // 直前の結果
-  if(S.last && S.phase!=='over'){
-    const L=S.last, g=S.players[L.guesser].name, gv=S.players[L.giver].name, tk=S.players[L.taker].name;
+  if(S.last && S.phase!=='over' && S.phase!=='reveal'){
+    const L=S.last, gv=S.players[L.giver].name, rc=S.players[L.receiver].name, tk=S.players[L.taker].name;
     const key = JSON.stringify(L), fresh = key!==lastKey; lastKey = key;
-    h += `<div class="box" style="text-align:center"><div class="big ${fresh?'flip':''}">${TYPES[L.card][0]}</div>
-    ${esc(gv)}「${TYPES[L.claim][1]}」→ ${esc(g)}は「${L.guess?'ホント':'ウソ'}」<br>正体は <b>${TYPES[L.card][1]}</b>（${L.truth?'本当':'ウソ'}だった）<br><b>${esc(tk)}さんが引き取り</b></div>`;
+    h += `<div class="box" style="text-align:center"><div class="bigcard ${fresh?'flip':''}">${CARDS.cardSVG(L.card)}</div>
+    ${esc(gv)} → ${esc(rc)}　正体は <b>${TYPES[L.card][1]}</b><br><b>${esc(tk)}さんが引き取り</b></div>`;
   }
 
   if(S.phase==='over'){
@@ -134,35 +140,35 @@ function render(){
     h += S.host ? `<button class="wide" id="again">もう一度あそぶ</button>` : `<div class="msg amber">ホストが次を始めるのを待っています</div>`;
   } else if(S.phase==='turn'){
     if(S.turn===me){
-      h += `<div class="msg amber">あなたの番です。①カード ②いう生き物 ③渡す相手 を選んでください</div>`;
-    } else h += `<div class="msg">${esc(S.players[S.turn].name)}さんがカードを選んでいます…</div>`;
+      h += `<div class="msg amber">あなたの番です。渡すカードと相手を選んで「渡す」。<br>相手には声で「これは○○」と言いましょう</div>`;
+    } else h += `<div class="msg">${esc(S.players[S.turn].name)}さんの番です</div>`;
   } else if(S.phase==='reveal'){
     const from=S.players[o.from].name, to=S.players[o.to].name;
-    const ans = o.guess?'ホント':'ウソ';
+    const fresh = lastKey!=='r'+o.card+o.from+o.to; lastKey='r'+o.card+o.from+o.to;
+    h += `<div class="box" style="text-align:center"><div class="bigcard ${fresh?'flip':''}">${CARDS.cardSVG(o.card)}</div><div style="font-size:13px;color:#566">${esc(from)} → ${esc(to)}</div></div>`;
     if(o.to===me){
-      h += `<div class="msg amber" style="text-align:center">あなたは「${ans}」と答えました<div class="big">🂠</div>みんなに見えるようにして、めくりましょう</div>
-      <button class="wide" id="reveal" style="font-size:22px;padding:18px">めくる！</button>`;
-    } else {
-      h += `<div class="msg" style="text-align:center">${esc(from)}さん「${TYPES[o.claim][1]}」→ ${esc(to)}さん「${ans}」<div class="big">🂠</div>${esc(to)}さんがめくるのを待っています…</div>`;
-    }
+      h += `<div class="msg amber" style="text-align:center">言った通りでしたか？<br>当たった・外れたを選んでください</div>
+      <button class="wide" data-resolve="false" style="padding:16px">当たった！<br><small>${esc(from)}さんが引き取る</small></button>
+      <button class="wide amber" data-resolve="true" style="padding:16px">外れた…<br><small>自分が引き取る</small></button>`;
+    } else h += `<div class="msg">${esc(to)}さんが決めています…</div>`;
   } else if(S.phase==='offered'){
     const from=S.players[o.from].name, to=S.players[o.to].name;
     if(o.to===me){
       if(!o.peeked){
         const rest = S.players.map((_,i)=>i).filter(i=>i!==me && !S.players[i].seen);
-        h += `<div class="msg amber" style="text-align:center">${esc(from)}さんから渡されました<div class="big">「${TYPES[o.claim][1]}」</div>これは本当？</div>
-        <div class="row" style="margin-top:8px"><button data-guess="true">ホント</button><button data-guess="false" class="amber">ウソ</button></div>
-        ${rest.length?`<button class="wide sub" id="peek">こっそり見て、別の人に回す</button>`:`<div style="font-size:13px;color:#566">全員が見たので、答えるしかありません</div>`}`;
+        h += `<div class="msg amber" style="text-align:center">${esc(from)}さんから届きました<div class="bigcard sm">${CARDS.cardBack()}</div>声で「ホント」か「ウソ」と答えて、めくりましょう</div>
+        <button class="wide" id="open" style="font-size:22px;padding:18px">めくる！</button>
+        ${rest.length?`<button class="wide sub" id="peek">こっそり見て、別の人に回す</button>`:`<div style="font-size:13px;color:#566">全員が見たので、めくるしかありません</div>`}`;
       } else {
         const seenIdx = S.players.map((p,i)=>p.seen||i===me?i:-1).filter(i=>i>=0);
-        h += `<div class="box" style="text-align:center"><div>あなただけに見えます</div><div class="big">${TYPES[o.card][0]}</div><b>${TYPES[o.card][1]}</b></div>
-        <b>なんと言う？</b>${typePicker()}<b>だれに回す？</b>${targetPicker(seenIdx)}
-        <button class="wide" id="pass" ${claim&&target!==null?'':'disabled'}>回す</button>`;
+        h += `<div class="box" style="text-align:center"><div>あなただけに見えます</div><div class="bigcard sm">${CARDS.cardSVG(o.card)}</div></div>
+        <b>だれに回す？</b>（声で「これは○○」と言ってください）${targetPicker(seenIdx)}
+        <button class="wide" id="pass" ${target!==null?'':'disabled'}>回す</button>`;
       }
     } else if(o.from===me){
-      h += `<div class="msg">あなた →「${TYPES[o.claim][1]}」→ ${esc(to)}さん。答えを待っています…</div>`;
+      h += `<div class="msg" style="text-align:center">あなた → ${esc(to)}さん<div class="bigcard sm">${CARDS.cardBack()}</div>相手の顔を見て待ちましょう</div>`;
     } else {
-      h += `<div class="msg">${esc(from)} →「${TYPES[o.claim][1]}」→ ${esc(to)}さん${o.peeked?'（見ています）':''}</div>`;
+      h += `<div class="msg" style="text-align:center">${esc(from)} → ${esc(to)}さん${o.peeked?'（こっそり見ています）':''}<div class="bigcard sm">${CARDS.cardBack()}</div></div>`;
     }
   }
 
@@ -170,10 +176,10 @@ function render(){
   if(S.phase!=='over'){
     const myTurn = S.phase==='turn' && S.turn===me;
     const idxs = S.hand.map((t,i)=>i).sort((a,b)=>KEYS.indexOf(S.hand[a])-KEYS.indexOf(S.hand[b]));
-    h += `<h2>あなたの手札（${S.hand.length}枚）</h2><div class="hand">${idxs.map(i=>`<div class="c ${sel===i?'sel':''}" ${myTurn?`data-card="${i}"`:''}>${TYPES[S.hand[i]][0]}<small>${TYPES[S.hand[i]][1]}</small></div>`).join('')||'<span>なし</span>'}</div>`;
+    h += `<h2>あなたの手札（${S.hand.length}枚）<small style="font-weight:400;color:#889"> 他の人に見せないで</small></h2><div class="hand">${idxs.map(i=>`<div class="c ${sel===i?'sel':''}" ${myTurn?`data-card="${i}"`:''}>${CARDS.cardSVG(S.hand[i])}</div>`).join('')||'<span>なし</span>'}</div>`;
     if(myTurn){
-      h += `<h2>いう生き物（本当でもウソでもOK）</h2>${typePicker()}<h2>渡す相手</h2>${targetPicker([me])}
-      <button class="wide" id="offer" ${sel!==null&&claim&&target!==null?'':'disabled'}>渡す</button>`;
+      h += `<h2>渡す相手</h2>${targetPicker([me])}
+      <button class="wide" id="offer" ${sel!==null&&target!==null?'':'disabled'}>渡す</button>`;
     }
   }
 
@@ -189,13 +195,12 @@ function bind(){
   if($('start')) $('start').onclick = ()=>send({t:'start'});
   if($('again')) $('again').onclick = ()=>send({t:'rematch'});
   q('[data-card]',el=>el.onclick=()=>{sel=+el.dataset.card;render()});
-  q('[data-claim]',el=>el.onclick=()=>{claim=el.dataset.claim;render()});
   q('[data-target]',el=>el.onclick=()=>{target=+el.dataset.target;render()});
-  q('[data-guess]',el=>el.onclick=()=>send({t:'guess',guess:el.dataset.guess==='true'}));
-  if($('reveal')) $('reveal').onclick = ()=>send({t:'reveal'});
+  q('[data-resolve]',el=>el.onclick=()=>send({t:'resolve',take:el.dataset.resolve==='true'}));
+  if($('open')) $('open').onclick = ()=>send({t:'open'});
   if($('peek')) $('peek').onclick = ()=>send({t:'peek'});
-  if($('offer')) $('offer').onclick = ()=>send({t:'offer',card:sel,claim,to:target});
-  if($('pass')) $('pass').onclick = ()=>send({t:'pass',claim,to:target});
+  if($('offer')) $('offer').onclick = ()=>send({t:'offer',card:sel,to:target});
+  if($('pass')) $('pass').onclick = ()=>send({t:'pass',to:target});
 }
 
 // 再接続（画面を閉じても戻れる）

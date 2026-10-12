@@ -34,33 +34,31 @@ server.listen(0, async () => {
   assert.strictEqual(a.state.hand.length, 21);
   assert(!JSON.stringify(a.state).includes(JSON.stringify(b.state.hand)), '他人の手札が漏れている');
 
-  for (let round = 0; round < 200; round++) {
+  for (let round = 0; round < 300; round++) {
     const s = a.state;
     if (s.phase === 'over') break;
     const cur = all[s.turn];
-    cur.send({ t: 'offer', card: 0, to: (s.turn + 1) % 3, claim: 'rat' });
-    const tgt = all[(s.turn + 1) % 3];
+    const ti = (s.turn + 1) % 3;
+    cur.send({ t: 'offer', card: 0, to: ti });
+    const tgt = all[ti];
     await tgt.wait((x) => x.phase === 'offered');
-    if (round % 2) { // 見て回す
+    assert.strictEqual(tgt.state.offer.card, undefined, '見る前に正体が届いている');
+    let receiver = tgt, ri = ti;
+    if (round % 2) { // こっそり見て回す
       tgt.send({ t: 'peek' });
       const seen = await tgt.wait((x) => x.offer && x.offer.peeked);
       assert(seen.offer.card, '見た本人にはカードが見えるはず');
-      const third = all.find((_, i) => i !== s.turn && i !== (s.turn + 1) % 3);
-      const other = all.indexOf(third);
-      assert(!third.state.offer.card, '関係ない人にカードが見えている');
-      tgt.send({ t: 'pass', to: other, claim: 'bat' });
-      await third.wait((x) => x.offer && x.offer.to === other && !x.offer.peeked && x.offer.claim === 'bat');
-      third.send({ t: 'guess', guess: true });
-      await third.wait((x) => x.phase === 'reveal');
-      assert(!JSON.stringify(a.state).includes('"card"') || a.state.hand, 'めくる前に正体は送らない');
-      third.send({ t: 'reveal' });
-    } else {
-      tgt.send({ t: 'guess', guess: false });
-      await tgt.wait((x) => x.phase === 'reveal');
-      assert.strictEqual(tgt.state.offer.card, undefined, 'めくる前に正体が見えている');
-      tgt.send({ t: 'reveal' });
+      ri = [0, 1, 2].find((i) => i !== s.turn && i !== ti);
+      receiver = all[ri];
+      assert(!receiver.state.offer.card, '関係ない人にカードが見えている');
+      tgt.send({ t: 'pass', to: ri });
+      await receiver.wait((x) => x.offer && x.offer.to === ri && !x.offer.peeked);
     }
-    await Promise.all(all.map((x) => x.wait((st) => st.phase !== 'offered')));
+    receiver.send({ t: 'open' });
+    await Promise.all(all.map((x) => x.wait((st) => st.phase === 'reveal')));
+    assert(all.every((x) => x.state.offer.card), 'めくったら全員に見える');
+    receiver.send({ t: 'resolve', take: round % 3 === 0 });
+    await Promise.all(all.map((x) => x.wait((st) => st.phase !== 'reveal')));
     await new Promise((r) => setTimeout(r, 5));
   }
   assert.strictEqual(a.state.phase, 'over');

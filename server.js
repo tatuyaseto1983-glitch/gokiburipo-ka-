@@ -89,9 +89,9 @@ function view(room, me) {
     hand: room.players[me].hand || [],
   };
   if (o) {
-    v.offer = { from: o.from, to: o.to, claim: o.claim, peeked: o.peeked, guess: o.guess };
-    // 見られるのは、いま渡されて「のぞいた」本人だけ
-    if (o.peeked && o.to === me) v.offer.card = o.card;
+    v.offer = { from: o.from, to: o.to, peeked: o.peeked };
+    // 正体が見えるのは、のぞいた本人と、めくったあとの全員だけ
+    if ((o.peeked && o.to === me) || room.phase === 'reveal') v.offer.card = o.card;
   }
   return v;
 }
@@ -103,22 +103,16 @@ function broadcast(room) {
   room.players.forEach((p, i) => send(p.ws, view(room, i)));
 }
 
-function resolveGuess(room, guess) {
+function resolve(room, take) {
+  // take=true: 受けた人が引き取る（はずれ）／false: 渡した人が引き取る（あたり）
   const o = room.offer;
-  const guesser = room.players[o.to];
   const giver = room.players[o.from];
-  const truth = o.card === o.claim;
-  const correct = guess === truth;
-  const taker = correct ? o.from : o.to;
+  const receiver = room.players[o.to];
+  const taker = take ? o.to : o.from;
   const takerP = room.players[taker];
   takerP.pile.push(o.card);
-  room.last = {
-    card: o.card, claim: o.claim, guess, truth, correct, giver: o.from, guesser: o.to, taker,
-  };
-  room.log.push(
-    `${giver.name}「${JP[o.claim]}」→ ${guesser.name}「${guess ? 'ホント' : 'ウソ'}」… ` +
-    `${truth ? '本当' : 'ウソ'}だった！ ${takerP.name} さんが引き取り`
-  );
+  room.last = { card: o.card, giver: o.from, receiver: o.to, taker };
+  room.log.push(`${giver.name} → ${receiver.name}：正体は${JP[o.card]}。${takerP.name} さんが引き取り`);
   room.offer = null;
   room.turn = taker;
   const loss = checkLoss(takerP);
@@ -129,11 +123,11 @@ function resolveGuess(room, guess) {
   if (takerP.hand.length === 0) endGame(room, taker, '手札がなくなった');
 }
 
+// 宣言（これは○○です）と「ホント／ウソ」は声で言う。アプリは札の受け渡しだけ担当する。
 function handle(room, idx, msg) {
   const p = room.players[idx];
   const n = room.players.length;
   const validTarget = (t, exclude) => Number.isInteger(t) && t >= 0 && t < n && !exclude.includes(t);
-  const validType = (c) => TYPES.includes(c);
 
   switch (msg.t) {
     case 'start':
@@ -142,29 +136,16 @@ function handle(room, idx, msg) {
     case 'rematch':
       if (idx !== 0 || room.phase !== 'over') return;
       return startGame(room);
-    case 'offer': { // 手札から1枚選んで渡す
+    case 'offer': { // 手札から1枚選んで、相手に裏向きで渡す
       if (room.phase !== 'turn' || room.turn !== idx) return;
       const ci = msg.card;
       if (!Number.isInteger(ci) || ci < 0 || ci >= p.hand.length) return;
-      if (!validTarget(msg.to, [idx]) || !validType(msg.claim)) return;
+      if (!validTarget(msg.to, [idx])) return;
       const [card] = p.hand.splice(ci, 1);
-      room.offer = { from: idx, to: msg.to, claim: msg.claim, card, seen: [idx], peeked: false };
+      room.offer = { from: idx, to: msg.to, card, seen: [idx], peeked: false };
       room.phase = 'offered';
-      room.log.push(`${p.name} → ${room.players[msg.to].name}：「これは${JP[msg.claim]}です」`);
+      room.log.push(`${p.name} → ${room.players[msg.to].name}：カードを渡した`);
       return;
-    }
-    case 'guess': { // ホント／ウソで答える
-      const o = room.offer;
-      if (room.phase !== 'offered' || !o || o.to !== idx || typeof msg.guess !== 'boolean') return;
-      o.guess = msg.guess; // 答えは出したが、まだめくらない
-      room.phase = 'reveal';
-      room.log.push(`${p.name}：「${msg.guess ? 'ホント' : 'ウソ'}」と答えた… めくります`);
-      return;
-    }
-    case 'reveal': { // 答えた人がめくる
-      const o = room.offer;
-      if (room.phase !== 'reveal' || !o || o.to !== idx) return;
-      return resolveGuess(room, o.guess);
     }
     case 'peek': { // こっそり見る（まだ見ていない相手が残っているときだけ）
       const o = room.offer;
@@ -178,14 +159,25 @@ function handle(room, idx, msg) {
       const o = room.offer;
       if (room.phase !== 'offered' || !o || o.to !== idx || !o.peeked) return;
       const seen = o.seen.concat(idx);
-      if (!validTarget(msg.to, seen) || !validType(msg.claim)) return;
+      if (!validTarget(msg.to, seen)) return;
       o.seen = seen;
       o.from = idx;
       o.to = msg.to;
-      o.claim = msg.claim;
       o.peeked = false;
-      room.log.push(`${p.name} → ${room.players[msg.to].name}：「これは${JP[msg.claim]}です」（回し）`);
+      room.log.push(`${p.name} → ${room.players[msg.to].name}：見て回した`);
       return;
+    }
+    case 'open': { // 声で答えたあと、全員に見えるようにめくる
+      const o = room.offer;
+      if (room.phase !== 'offered' || !o || o.to !== idx || o.peeked) return;
+      room.phase = 'reveal';
+      room.log.push(`${p.name}：めくった！`);
+      return;
+    }
+    case 'resolve': { // めくった人が、引き取る人を決める
+      const o = room.offer;
+      if (room.phase !== 'reveal' || !o || o.to !== idx || typeof msg.take !== 'boolean') return;
+      return resolve(room, msg.take);
     }
   }
 }

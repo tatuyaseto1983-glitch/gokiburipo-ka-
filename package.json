@@ -1,0 +1,13 @@
+{
+  "name": "gokiburi-poker",
+  "version": "1.0.0",
+  "description": "ごきぶりポーカー（スマホで手札を確認しながら遊べるアプリ）",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

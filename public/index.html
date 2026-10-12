@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ごきぶりポーカー</title>
+<style>
+:root{--teal:#2EA89E;--teal-d:#1f7f77;--amber:#E0A45C;--bg:#f4faf9;--ink:#1d2b2a;--card:#fff;--line:#d6e6e4;--red:#d9534f}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;font-size:16px;line-height:1.5}
+#app{max-width:520px;margin:0 auto;padding:12px 14px calc(24px + env(safe-area-inset-bottom))}
+h1{font-size:22px;margin:8px 0;color:var(--teal-d)}
+h2{font-size:16px;margin:16px 0 6px}
+.box{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin:10px 0}
+input{width:100%;padding:12px;font-size:18px;border:2px solid var(--line);border-radius:10px;margin:4px 0}
+button{font:inherit;border:0;border-radius:12px;padding:12px 16px;background:var(--teal);color:#fff;font-weight:700;cursor:pointer}
+button.sub{background:#fff;color:var(--teal-d);border:2px solid var(--teal)}
+button.amber{background:var(--amber);color:#3a2a10}
+button.wide{width:100%;margin:5px 0}
+button:disabled{opacity:.4}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.row>button{flex:1}
+.code{font-size:44px;letter-spacing:8px;font-weight:800;color:var(--teal-d);text-align:center}
+.pl{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:10px;border:2px solid var(--line);margin:6px 0;background:#fff}
+.pl.turn{border-color:var(--amber);background:#fff8ec}
+.pl.me{border-left:6px solid var(--teal)}
+.pl.off{opacity:.5}
+.pile{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+.chip{background:#eef6f5;border-radius:8px;padding:1px 7px;font-size:15px}
+.chip.warn{background:#ffe3a8;font-weight:700}
+.chip.danger{background:#f8c9c7;font-weight:700}
+.hand{display:flex;flex-wrap:wrap;gap:6px}
+.c{width:54px;height:72px;border-radius:9px;border:2px solid var(--line);background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:28px;position:relative}
+.c small{font-size:10px;color:#667}
+.c.sel{border-color:var(--amber);transform:translateY(-6px);box-shadow:0 4px 8px #0002;background:#fff8ec}
+.types{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.types button{background:#fff;color:var(--ink);border:2px solid var(--line);padding:8px 2px;font-size:24px;line-height:1.2}
+.types button small{display:block;font-size:11px;font-weight:400}
+.types button.on{border-color:var(--amber);background:#fff8ec}
+.big{font-size:60px;text-align:center}
+.msg{background:var(--teal);color:#fff;border-radius:12px;padding:10px 12px;font-weight:700}
+.msg.amber{background:var(--amber);color:#3a2a10}
+.log{font-size:13px;color:#566;margin:0;padding-left:18px}
+.err{color:var(--red);font-weight:700;min-height:1.4em}
+.flip{animation:flip .9s ease-out}
+@keyframes flip{0%{transform:rotateY(90deg) scale(.6);opacity:0}60%{transform:rotateY(-12deg) scale(1.15)}100%{transform:none;opacity:1}}
+.tg button{margin:3px 4px 3px 0}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const TYPES = {cockroach:['🪳','ゴキブリ'],rat:['🐀','ネズミ'],bat:['🦇','コウモリ'],fly:['🪰','ハエ'],toad:['🐸','カエル'],spider:['🕷️','クモ'],scorpion:['🦂','サソリ'],stinkbug:['🪲','カメムシ']};
+const KEYS = Object.keys(TYPES);
+const $app = document.getElementById('app');
+let ws, S = null, err = '';
+let lastKey = '', sel = null, claim = null, target = null; // 操作中の選択
+const store = {get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}}};
+
+function connect(first){
+  ws = new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
+  ws.onopen = first;
+  ws.onmessage = e => {
+    const m = JSON.parse(e.data);
+    if(m.t==='joined'){ store.set('token',m.token); }
+    else if(m.t==='error'){ err = m.text; render(); }
+    else if(m.t==='state'){
+      if(S && (S.phase!==m.phase || S.turn!==m.turn || (S.offer&&S.offer.to)!==(m.offer&&m.offer.to) || (S.offer&&S.offer.peeked)!==(m.offer&&m.offer.peeked))){ sel=claim=target=null; }
+      S = m; err=''; store.set('room',m.room); render();
+    }
+  };
+  ws.onclose = () => { setTimeout(()=>{ if(S){ connect(()=>send({t:'join',room:S.room,name:store.get('name')||'',token:store.get('token')})); } },1500); };
+}
+const send = o => ws && ws.readyState===1 && ws.send(JSON.stringify(o));
+const esc = s => String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const tn = k => TYPES[k][0]+TYPES[k][1];
+
+function home(){
+  $app.innerHTML = `<h1>🪳 ごきぶりポーカー</h1>
+  <div class="box"><b>なまえ</b><input id="nm" maxlength="8" placeholder="8文字まで" value="${esc(store.get('name')||'')}">
+  <button class="wide" id="mk">部屋をつくる</button></div>
+  <div class="box"><b>部屋コードで入る</b><input id="rc" inputmode="numeric" maxlength="4" placeholder="4けたの数字">
+  <button class="wide sub" id="jn">入る</button></div>
+  <div class="err">${esc(err)}</div>
+  <p style="font-size:13px;color:#566">2〜6人。それぞれのスマホで自分の手札だけが見えます。</p>`;
+  const name = () => { const v=document.getElementById('nm').value.trim(); store.set('name',v); return v; };
+  document.getElementById('mk').onclick = () => { const n=name(); connect(()=>send({t:'create',name:n})); };
+  document.getElementById('jn').onclick = () => { const n=name(), r=document.getElementById('rc').value.trim(); connect(()=>send({t:'join',room:r,name:n})); };
+}
+
+function playerCard(p,i){
+  const counts = {}; p.pile.forEach(t=>counts[t]=(counts[t]||0)+1);
+  const chips = Object.keys(counts).map(t=>`<span class="chip ${counts[t]>=3?(counts[t]>=4?'danger':'warn'):''}">${TYPES[t][0]}×${counts[t]}</span>`).join('');
+  const kinds = Object.keys(counts).length;
+  return `<div class="pl ${S.turn===i&&S.phase!=='lobby'?'turn':''} ${i===S.me?'me':''} ${p.online?'':'off'}">
+    <div><b>${esc(p.name)}</b>${i===S.me?'（あなた）':''}${p.seen?' 👀':''}
+    <div class="pile">${chips||'<span style="color:#9aa">前のカード なし</span>'}${kinds>=6?`<span class="chip warn">${kinds}/8種類</span>`:''}</div></div>
+    ${S.phase==='lobby'?'':`<div>🂠×${p.handCount}</div>`}</div>`;
+}
+
+function typePicker(){
+  return `<div class="types">${KEYS.map(k=>`<button data-claim="${k}" class="${claim===k?'on':''}">${TYPES[k][0]}<small>${TYPES[k][1]}</small></button>`).join('')}</div>`;
+}
+function targetPicker(exclude){
+  return `<div class="tg">${S.players.map((p,i)=>exclude.includes(i)?'':`<button class="${target===i?'amber':'sub'}" data-target="${i}">${esc(p.name)}</button>`).join('')}</div>`;
+}
+
+function render(){
+  if(!S) return home();
+  const me = S.me, mine = S.players[me], o = S.offer;
+  let h = `<h1>🪳 ごきぶりポーカー <span style="font-size:13px;color:#566">部屋 ${S.room}</span></h1>`;
+
+  if(S.phase==='lobby'){
+    h += `<div class="box"><div style="text-align:center">部屋コード</div><div class="code">${S.room}</div>
+    <div style="text-align:center;font-size:13px;color:#566">みんなに伝えて、このコードで入ってもらいます</div></div>
+    <h2>参加者（${S.players.length}人）</h2>${S.players.map(playerCard).join('')}`;
+    h += S.host ? `<button class="wide" id="start" ${S.players.length<2?'disabled':''}>ゲーム開始</button>${S.players.length<2?'<div style="font-size:13px">あと1人以上でスタートできます</div>':''}`
+                : `<div class="msg amber">ホストが始めるのを待っています…</div>`;
+    $app.innerHTML = h; bind(); return;
+  }
+
+  // 直前の結果
+  if(S.last && S.phase!=='over'){
+    const L=S.last, g=S.players[L.guesser].name, gv=S.players[L.giver].name, tk=S.players[L.taker].name;
+    const key = JSON.stringify(L), fresh = key!==lastKey; lastKey = key;
+    h += `<div class="box" style="text-align:center"><div class="big ${fresh?'flip':''}">${TYPES[L.card][0]}</div>
+    ${esc(gv)}「${TYPES[L.claim][1]}」→ ${esc(g)}は「${L.guess?'ホント':'ウソ'}」<br>正体は <b>${TYPES[L.card][1]}</b>（${L.truth?'本当':'ウソ'}だった）<br><b>${esc(tk)}さんが引き取り</b></div>`;
+  }
+
+  if(S.phase==='over'){
+    const L=S.players[S.loser];
+    h += `<div class="msg" style="text-align:center;font-size:20px;background:var(--red)">🏁 ${esc(L.name)}さんの負け！<br><small>${esc(S.reason)}</small></div>
+    <p>ほかのみんなの勝ちです 🎉</p>`;
+    h += S.host ? `<button class="wide" id="again">もう一度あそぶ</button>` : `<div class="msg amber">ホストが次を始めるのを待っています</div>`;
+  } else if(S.phase==='turn'){
+    if(S.turn===me){
+      h += `<div class="msg amber">あなたの番です。①カード ②いう生き物 ③渡す相手 を選んでください</div>`;
+    } else h += `<div class="msg">${esc(S.players[S.turn].name)}さんがカードを選んでいます…</div>`;
+  } else if(S.phase==='offered'){
+    const from=S.players[o.from].name, to=S.players[o.to].name;
+    if(o.to===me){
+      if(!o.peeked){
+        const rest = S.players.map((_,i)=>i).filter(i=>i!==me && !S.players[i].seen);
+        h += `<div class="msg amber" style="text-align:center">${esc(from)}さんから渡されました<div class="big">「${TYPES[o.claim][1]}」</div>これは本当？</div>
+        <div class="row" style="margin-top:8px"><button data-guess="true">ホント</button><button data-guess="false" class="amber">ウソ</button></div>
+        ${rest.length?`<button class="wide sub" id="peek">こっそり見て、別の人に回す</button>`:`<div style="font-size:13px;color:#566">全員が見たので、答えるしかありません</div>`}`;
+      } else {
+        const seenIdx = S.players.map((p,i)=>p.seen||i===me?i:-1).filter(i=>i>=0);
+        h += `<div class="box" style="text-align:center"><div>あなただけに見えます</div><div class="big">${TYPES[o.card][0]}</div><b>${TYPES[o.card][1]}</b></div>
+        <b>なんと言う？</b>${typePicker()}<b>だれに回す？</b>${targetPicker(seenIdx)}
+        <button class="wide" id="pass" ${claim&&target!==null?'':'disabled'}>回す</button>`;
+      }
+    } else if(o.from===me){
+      h += `<div class="msg">あなた →「${TYPES[o.claim][1]}」→ ${esc(to)}さん。答えを待っています…</div>`;
+    } else {
+      h += `<div class="msg">${esc(from)} →「${TYPES[o.claim][1]}」→ ${esc(to)}さん${o.peeked?'（見ています）':''}</div>`;
+    }
+  }
+
+  // 自分の手札
+  if(S.phase!=='over'){
+    const myTurn = S.phase==='turn' && S.turn===me;
+    const idxs = S.hand.map((t,i)=>i).sort((a,b)=>KEYS.indexOf(S.hand[a])-KEYS.indexOf(S.hand[b]));
+    h += `<h2>あなたの手札（${S.hand.length}枚）</h2><div class="hand">${idxs.map(i=>`<div class="c ${sel===i?'sel':''}" ${myTurn?`data-card="${i}"`:''}>${TYPES[S.hand[i]][0]}<small>${TYPES[S.hand[i]][1]}</small></div>`).join('')||'<span>なし</span>'}</div>`;
+    if(myTurn){
+      h += `<h2>いう生き物（本当でもウソでもOK）</h2>${typePicker()}<h2>渡す相手</h2>${targetPicker([me])}
+      <button class="wide" id="offer" ${sel!==null&&claim&&target!==null?'':'disabled'}>渡す</button>`;
+    }
+  }
+
+  h += `<h2>みんなの前のカード</h2>${S.players.map(playerCard).join('')}`;
+  if(S.removed) h += `<div style="font-size:12px;color:#889">※割り切れない${S.removed}枚は使っていません</div>`;
+  h += `<h2>これまで</h2><ul class="log">${S.log.map(l=>`<li>${esc(l)}</li>`).join('')}</ul>`;
+  $app.innerHTML = h; bind();
+}
+
+function bind(){
+  const q = (s,f)=>document.querySelectorAll(s).forEach(f);
+  const $ = id => document.getElementById(id);
+  if($('start')) $('start').onclick = ()=>send({t:'start'});
+  if($('again')) $('again').onclick = ()=>send({t:'rematch'});
+  q('[data-card]',el=>el.onclick=()=>{sel=+el.dataset.card;render()});
+  q('[data-claim]',el=>el.onclick=()=>{claim=el.dataset.claim;render()});
+  q('[data-target]',el=>el.onclick=()=>{target=+el.dataset.target;render()});
+  q('[data-guess]',el=>el.onclick=()=>send({t:'guess',guess:el.dataset.guess==='true'}));
+  if($('peek')) $('peek').onclick = ()=>send({t:'peek'});
+  if($('offer')) $('offer').onclick = ()=>send({t:'offer',card:sel,claim,to:target});
+  if($('pass')) $('pass').onclick = ()=>send({t:'pass',claim,to:target});
+}
+
+// 再接続（画面を閉じても戻れる）
+(function(){
+  const r=store.get('room'), t=store.get('token');
+  if(r&&t){ connect(()=>send({t:'join',room:r,name:store.get('name')||'',token:t})); setTimeout(()=>{ if(!S) home(); },1200); }
+  else home();
+})();
+</script>
+</body>
+</html>

@@ -51,7 +51,15 @@ server.listen(0, async () => {
       tgt.send({ t: 'pass', to: other, claim: 'bat' });
       await third.wait((x) => x.offer && x.offer.to === other && !x.offer.peeked && x.offer.claim === 'bat');
       third.send({ t: 'guess', guess: true });
-    } else tgt.send({ t: 'guess', guess: false });
+      await third.wait((x) => x.phase === 'reveal');
+      assert(!JSON.stringify(a.state).includes('"card"') || a.state.hand, 'めくる前に正体は送らない');
+      third.send({ t: 'reveal' });
+    } else {
+      tgt.send({ t: 'guess', guess: false });
+      await tgt.wait((x) => x.phase === 'reveal');
+      assert.strictEqual(tgt.state.offer.card, undefined, 'めくる前に正体が見えている');
+      tgt.send({ t: 'reveal' });
+    }
     await Promise.all(all.map((x) => x.wait((st) => st.phase !== 'offered')));
     await new Promise((r) => setTimeout(r, 5));
   }

@@ -89,7 +89,7 @@ function view(room, me) {
     hand: room.players[me].hand || [],
   };
   if (o) {
-    v.offer = { from: o.from, to: o.to, claim: o.claim, peeked: o.peeked };
+    v.offer = { from: o.from, to: o.to, claim: o.claim, peeked: o.peeked, guess: o.guess };
     // 見られるのは、いま渡されて「のぞいた」本人だけ
     if (o.peeked && o.to === me) v.offer.card = o.card;
   }
@@ -156,7 +156,15 @@ function handle(room, idx, msg) {
     case 'guess': { // ホント／ウソで答える
       const o = room.offer;
       if (room.phase !== 'offered' || !o || o.to !== idx || typeof msg.guess !== 'boolean') return;
-      return resolveGuess(room, msg.guess);
+      o.guess = msg.guess; // 答えは出したが、まだめくらない
+      room.phase = 'reveal';
+      room.log.push(`${p.name}：「${msg.guess ? 'ホント' : 'ウソ'}」と答えた… めくります`);
+      return;
+    }
+    case 'reveal': { // 答えた人がめくる
+      const o = room.offer;
+      if (room.phase !== 'reveal' || !o || o.to !== idx) return;
+      return resolveGuess(room, o.guess);
     }
     case 'peek': { // こっそり見る（まだ見ていない相手が残っているときだけ）
       const o = room.offer;

@@ -136,6 +136,15 @@ function render(){
     if(S.turn===me){
       h += `<div class="msg amber">あなたの番です。①カード ②いう生き物 ③渡す相手 を選んでください</div>`;
     } else h += `<div class="msg">${esc(S.players[S.turn].name)}さんがカードを選んでいます…</div>`;
+  } else if(S.phase==='reveal'){
+    const from=S.players[o.from].name, to=S.players[o.to].name;
+    const ans = o.guess?'ホント':'ウソ';
+    if(o.to===me){
+      h += `<div class="msg amber" style="text-align:center">あなたは「${ans}」と答えました<div class="big">🂠</div>みんなに見えるようにして、めくりましょう</div>
+      <button class="wide" id="reveal" style="font-size:22px;padding:18px">めくる！</button>`;
+    } else {
+      h += `<div class="msg" style="text-align:center">${esc(from)}さん「${TYPES[o.claim][1]}」→ ${esc(to)}さん「${ans}」<div class="big">🂠</div>${esc(to)}さんがめくるのを待っています…</div>`;
+    }
   } else if(S.phase==='offered'){
     const from=S.players[o.from].name, to=S.players[o.to].name;
     if(o.to===me){
@@ -183,6 +192,7 @@ function bind(){
   q('[data-claim]',el=>el.onclick=()=>{claim=el.dataset.claim;render()});
   q('[data-target]',el=>el.onclick=()=>{target=+el.dataset.target;render()});
   q('[data-guess]',el=>el.onclick=()=>send({t:'guess',guess:el.dataset.guess==='true'}));
+  if($('reveal')) $('reveal').onclick = ()=>send({t:'reveal'});
   if($('peek')) $('peek').onclick = ()=>send({t:'peek'});
   if($('offer')) $('offer').onclick = ()=>send({t:'offer',card:sel,claim,to:target});
   if($('pass')) $('pass').onclick = ()=>send({t:'pass',claim,to:target});

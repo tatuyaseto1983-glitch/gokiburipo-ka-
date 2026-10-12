@@ -15,3 +15,7 @@
 同じ種類が4枚そろう／8種類すべてそろう／自分の番で手札がない
 
 ※カードが割り切れない人数のときは、余りは使いません。
+
+## インターネットに公開する（Render）
+1. https://dashboard.render.com/blueprints で「New Blueprint Instance」→ このリポジトリを選ぶ
+2. 「Apply」を押すと `render.yaml` の設定でそのまま作られ、`https://〜.onrender.com` が発行されます
